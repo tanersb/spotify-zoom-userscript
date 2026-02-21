@@ -1,12 +1,12 @@
 // ==UserScript==
-// @name         Spotify HD Image Viewer & Downloader (Embed Fix)
+// @name         Spotify HD Image Viewer & Downloader (Embed + Grid Fix)
 // @namespace    bytanersb_fixed
-// @version      1.1.2
-// @description  View and download Spotify images in HD. Works on Embeds and Web Player.
-// @author       bytanersb
-// @match        http://googleusercontent.com/spotify.com/*
-// @match        https://open.spotify.com/*
-// @match        https://xpui.app.spotify.com/*
+// @version      1.1.3
+// @description  View and download Spotify images in HD. Works on Embeds, Web Player and Library Grid.
+// @author       bytanersb (fixed/enhanced)
+// @match        *://open.spotify.com/*
+// @match        *://*.spotify.com/*
+// @match        *://xpui.app.spotify.com/*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/tanersb/spotify-zoom-userscript/main/spotify-hd-downloader.user.js
 // @downloadURL  https://raw.githubusercontent.com/tanersb/spotify-zoom-userscript/main/spotify-hd-downloader.user.js
@@ -17,17 +17,16 @@
 
     // iframe içinde miyiz kontrolü?
     const isIframe = window.self !== window.top;
-
-    // iframe içindeysek her zaman aktif olsun, değilse localStorage'a baksın
     let isScriptActive = isIframe ? true : (localStorage.getItem('spotify_zoomer_active') !== 'false');
 
-    // --- BUTON OLUŞTURMA (Sadece ana penceredeyse veya iframe çok büyükse göster) ---
-    const toggleBtn = document.createElement('div');
+    // --- TOGGLE BUTONU (sadece ana pencerede veya büyük iframe'lerde göster) ---
+    let toggleBtn;
     if (!isIframe || window.innerHeight > 400) {
+        toggleBtn = document.createElement('div');
         toggleBtn.id = 'spotify-zoom-toggle';
         Object.assign(toggleBtn.style, {
             position: 'fixed',
-            bottom: '90px',   // <-- GÜNCELLENDİ: Buton yukarı alındı (20px -> 90px)
+            bottom: '90px',
             right: '20px',
             zIndex: '999999',
             padding: '8px 12px',
@@ -43,7 +42,8 @@
             alignItems: 'center',
             gap: '8px',
             backgroundColor: '#121212',
-            border: '1px solid #333'
+            border: '1px solid #333',
+            color: '#1db954'
         });
 
         const statusText = document.createElement('span');
@@ -65,7 +65,7 @@
         }
         updateButtonVisuals();
 
-        toggleBtn.addEventListener('click', function() {
+        toggleBtn.addEventListener('click', () => {
             isScriptActive = !isScriptActive;
             localStorage.setItem('spotify_zoomer_active', isScriptActive);
             updateButtonVisuals();
@@ -73,13 +73,14 @@
         });
     }
 
-    // --- OVERLAY (Görüntüleme Alanı) ---
+    // --- OVERLAY ---
     const overlay = document.createElement('div');
     Object.assign(overlay.style, {
         position: 'fixed', top: '0', left: '0', width: '100vw', height: '100vh',
         backgroundColor: 'rgba(0,0,0,0.85)', zIndex: '2147483647',
-        pointerEvents: 'none', display: 'none', alignItems: 'center',
-        justifyContent: 'center', flexDirection: 'column', backdropFilter: 'blur(5px)'
+        pointerEvents: 'none', display: 'none',
+        alignItems: 'center', justifyContent: 'center',
+        flexDirection: 'column', backdropFilter: 'blur(5px)'
     });
 
     const hdImage = document.createElement('img');
@@ -102,43 +103,70 @@
 
     let currentHighResUrl = null;
 
-    // Resmi HD yapma fonksiyonu
+    // URL'yi yüksek çözünürlüğe çevirme
     function enhanceUrl(src) {
-        // Embed resimleri bazen farklı boyutta gelir, onları 640px veya en büyük boyuta zorla
-        if (src.includes('mosaic.scdn.co')) return src.replace(/\/\d+\//, '/640/');
-        if (src.includes('i.scdn.co/image/')) return src; // Genellikle zaten doğrudur ama boyutu url'den anlaşılmaz
+        if (src.includes('mosaic.scdn.co')) {
+            return src.replace(/\/\d+\//, '/640/');
+        }
+        // image-cdn-ak/fa gibi yeni adresler genelde zaten yüksek çözünürlükte
+        if (src.includes('image-cdn') || src.includes('ab67706c0000da84')) {
+            return src; // boyut eklemeye gerek yok, genelde max kalitede geliyor
+        }
         return src;
     }
 
-    // --- MOUSE HOVER OLAYI ---
+    // --- MOUSE HOVER ---
     document.addEventListener('mouseover', function(e) {
         if (!isScriptActive) return;
 
-        // Hedef bir resim mi?
-        let imgElement = e.target.tagName === 'IMG' ? e.target : e.target.querySelector('img');
+        let imgElement = null;
 
-        // Eğer doğrudan resim değilse, Embed player içindeki kapak yapısını kontrol et
-        if (!imgElement) {
-            // Spotify Embed özel yapısı (Link veya Artwork divi içinde olabilir)
-            const artContainer = e.target.closest('[data-testid="cover-art"]') || e.target.closest('.CoverArt');
-            if (artContainer) imgElement = artContainer.querySelector('img');
+        // 1. Direkt resim
+        if (e.target.tagName === 'IMG') {
+            imgElement = e.target;
+        }
+        // 2. Yakın container'lardan resim ara
+        else {
+            const possibleContainers = [
+                '[data-testid="cover-art"]',
+                '.CoverArt',
+                '[data-encore-id="card"]',
+                '.Card',
+                '.YR9YVGItxfIgAZje',           // yeni grid kapak wrapper
+                '[data-testid="grid-container"]', // üst grid
+                '.P0DCrcBH45YVGZwP'            // resim direkt wrapper
+            ];
+
+            let container = null;
+            for (const sel of possibleContainers) {
+                container = e.target.closest(sel);
+                if (container) break;
+            }
+
+            if (container) {
+                imgElement = container.querySelector('img[data-testid="card-image"]') ||
+                             container.querySelector('img');
+            }
         }
 
         if (imgElement && imgElement.src) {
-            let src = imgElement.src;
-
-            // Sadece Spotify CDN resimlerine tepki ver
+            const src = imgElement.src;
             if (src.includes('scdn.co') || src.includes('spotifycdn.com')) {
                 currentHighResUrl = enhanceUrl(src);
 
-                // Srcset varsa en kalitelisini al
+                // srcset varsa en büyük olanı al
                 if (imgElement.srcset && !src.includes('mosaic')) {
-                    const sources = imgElement.srcset.split(',').map(s => {
-                        const parts = s.trim().split(' ');
-                        return { url: parts[0], width: parseInt(parts[1]) || 0 };
-                    });
-                    sources.sort((a, b) => b.width - a.width);
-                    if (sources.length > 0) currentHighResUrl = sources[0].url;
+                    const sources = imgElement.srcset.split(',')
+                        .map(s => {
+                            const parts = s.trim().split(' ');
+                            return { url: parts[0], width: parseInt(parts[1]) || 0 };
+                        })
+                        .filter(s => s.width > 0);
+
+                    if (sources.length > 0) {
+                        sources.sort((a, b) => b.width - a.width);
+                        currentHighResUrl = sources[0].url;
+                    }
                 }
 
                 hdImage.src = currentHighResUrl;
@@ -147,10 +175,10 @@
         }
     });
 
+    // Mouse çıkınca overlay'i kapat
     document.addEventListener('mouseout', function(e) {
         if (!isScriptActive) return;
-        // Mouse overlay'e geçmediyse kapat
-        if (e.relatedTarget !== hdImage && e.relatedTarget !== overlay) {
+        if (e.relatedTarget !== hdImage && e.relatedTarget !== overlay && !overlay.contains(e.relatedTarget)) {
             overlay.style.display = 'none';
             currentHighResUrl = null;
             infoBox.innerText = "[S] İndir";
@@ -158,10 +186,9 @@
         }
     });
 
-    // --- İNDİRME İŞLEMİ (S TUŞU) ---
+    // --- S TUŞU İLE İNDİRME ---
     document.addEventListener('keydown', async function(e) {
         if (!isScriptActive) return;
-
         if ((e.key === 's' || e.key === 'S') && overlay.style.display === 'flex' && currentHighResUrl) {
             e.preventDefault();
             infoBox.innerText = "İndiriliyor...";
@@ -169,6 +196,7 @@
 
             try {
                 const response = await fetch(currentHighResUrl);
+                if (!response.ok) throw new Error('Network response was not ok');
                 const blob = await response.blob();
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -181,7 +209,7 @@
                 window.URL.revokeObjectURL(url);
                 infoBox.innerText = "✔ Kaydedildi";
             } catch (err) {
-                console.error(err);
+                console.error('İndirme hatası:', err);
                 infoBox.innerText = "Hata! Yeni sekmede açılıyor...";
                 window.open(currentHighResUrl, '_blank');
             }
